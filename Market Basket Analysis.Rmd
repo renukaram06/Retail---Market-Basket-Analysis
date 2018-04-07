@@ -1,0 +1,135 @@
+---
+title: "Market Basket Analysis"
+author: "Renuka Ramachandran"
+date: "4/7/2017"
+output:
+  html_document: default
+  word_document: default
+---
+
+###**INTRODUCTION**
+- The "Market Basket Analysis" analyses using **point of sale transactions** data. 
+- Uses the information on what customers buy to provide insights into customer purchase behavior  and why they make certain purchases.
+- Ability to mine frequent patterns which helps in identifying products are that purchased together and which are most amenable to promotion bundling as well as cross merchandising.
+
+
+###**1.Creating an Environment**
+- Involves loading the appropriate libraries
+- Load the dataset into the working environment
+```{r warning=FALSE, message=FALSE}
+rm(list=ls())
+library(readr)     # as_date
+library(lubridate) # read_csv2
+library(arules)    # Apriori Algo
+library(arulesViz) # for visualization
+setwd("/Users/Renuka/Projects/market basket analysis")
+retail <- read_csv("Online Retail.csv")
+```
+
+
+###**2.Data Exploration**
+1.Number of Unique Invoice No.s
+```{r warning=FALSE, message=FALSE}
+#Data exploration
+#No. of unique orders in the dataset
+head(retail)
+order_count <- length(unique(retail$InvoiceNo))
+order_count
+
+#Transaction dates #Eight months data
+order_max_date <- max(retail$InvoiceDate)
+order_max_date
+order_min_date <- min(retail$InvoiceDate)
+order_min_date
+
+#Unique Countries 
+unique(retail$Country)
+country_trans <- aggregate(retail$InvoiceNo,list(retail$Country),length) #almost like group by and sum
+country_trans
+head(country_trans)
+country_trans[which.max(country_trans$x),]
+#since UK has maximum number of transactions - MBA is done for United Kingdom
+
+#4070 unique Products in total
+length(unique(retail$StockCode))
+oDesc_stock<-aggregate(retail$StockCode,list(retail$Description),length) #almost like group by and sum
+nrow(oDesc_stock)
+head(oDesc_stock)
+```
+
+##**3.Data Cleaning**
+```{r warning=FALSE, message=FALSE}
+# Since we are considering only UK
+retail_uk <- subset(retail, retail$Country=="United Kingdom")
+
+# Remove the columns that are not required
+colnames(retail_uk)
+drops <- "Country"
+retail_uk <- retail_uk[ ,!(names(retail_uk) %in% drops)]
+colnames(retail_uk)
+total_entries <- length(unique(retail_uk$InvoiceNo))
+
+# Remove the canceled orders 
+# NOTE: Canceled orders begin with 'C' or has some textual characters
+retail_valid <- retail_uk[-grep("[A-Z]",retail_uk$InvoiceNo),]
+retail_valid <- retail_uk[-grep("[A-Z]",retail_uk$StockCode),]
+Desc_stock <- aggregate(retail_valid$StockCode,list(retail_valid$Description),length)
+head(Desc_stock)
+
+# Remove rows with invalid product description 
+# NOTE: Invalid descriptions has lower case characters - removing those rows 
+retail_valid_1 <- retail_valid[-grep("[a-z]",retail_valid$Description),]
+retail_valid_2 <- retail_valid_1[-grep("\\?",retail_valid_1$Description),]
+valid_entries <- length(unique(retail_valid_2$InvoiceNo))
+invalid_entries <- total_entries - valid_entries
+c(invalid_entries, valid_entries)
+```
+
+###**4.Frequent Item Set Analysis**
+```{r warning=FALSE, message=FALSE}
+##Converting data to transactions
+transaction_detail <- aggregate(retail_valid_2$Description ~ retail_valid_2$InvoiceNo,
+                              FUN=paste,collapse=',')
+head(transaction_detail)
+
+# install.packages("arules") - only transaction, 
+itemsets<-transaction_detail[,-1]
+head(itemsets)
+
+# converting data to transaction object
+#write(itemsets,"itemsets2.csv")
+itemsets_txn<-read.transactions("itemsets2.csv",format="basket",rm.duplicates=TRUE,sep=",")
+```
+
+###**5.Apriori Algorithm and Rules Generation**
+**Important Metrics to consider**
+- **Support**     : Probability that a set of items occur together
+- **Confidence**  : Probability that a customer purchases item X, given that the person buys item Y
+- **Strong Rule** : Rules that satisfy both Minimum Support and Minimum Confidence
+- **Apriori Algo**: Performs a Breadth First Search (first single itemsets, then 2-item sets ..,). Calculates **support** for single-item item-sets if(supp < minimumSupp) then ignores the item-set.
+- **Lift**        : Lift > 1 indicates a rule that is useful in finding consequent items sets.
+(i.e., more useful than just selecting transactions randomly)
+
+```{r warning=FALSE, message=FALSE}
+rules<-apriori(itemsets_txn,parameter=list(supp=0.005,conf=0.7,maxlen=2)) 
+# head(inspect(rules))
+
+rules_df<- as(rules,"data.frame")
+
+head(rules_df)
+
+rules_df$InverseConfidence<-(rules_df$support * rules_df$lift)/rules_df$confidence
+
+rules_final<-subset(rules_df,rules_df$confidence > rules_df$InverseConfidence)
+
+final_recomm <- read_csv("onlineretail_recommender2.csv")
+nrow(final_recomm)
+```
+
+###**6.Data Exploration on resultant item sets**
+
+- Displaying records with **Max Confidence**. That is, if X is bought then Y will be purchased 95-100% of the times. 
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+# Max Confidence : If X is bought then Y will be purchased 
+final_recomm[final_recomm$confidence >= 0.95, ]
+```
